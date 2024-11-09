@@ -1,0 +1,605 @@
+---
+title: "Raport 3 - Analiza dużych zbiorów danych"
+author: "Magdalena Potok"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+
+
+```{r, include=FALSE, warning = FALSE}
+library(ggplot2)
+library(gridExtra)
+library(tidyr)
+library(knitr)
+library(bigstep)
+library(reshape2)
+library(dplyr)
+library(kableExtra)
+set.seed(1)
+```
+Celem tego raportu jest analiza różnych kryteriów informacyjnych. W tym raporcie skupimy się na kryteriach $AIC, BIC, RIC, mBIC$ oraz $mBIC2$, oceniając je pod kątem liczby prawdziwych odkyć, liczby fałszywych odkryć, błędu średniokwadratowego oraz mocy. Przeanalizujemy również różne estymatory błędu predykcji $PE$. Rozważymy sytuacje z liczbą obserwacji $n = 1000$ oraz $n = 5000$.
+
+
+## Zadanie 1
+
+Dla macierzy planu $\mathbb{X}_{nx950}$, której elementy są niezależnymi zmiennymi z losowego rozkładu normalnego $N(0, \sigma = \frac{1}{\sqrt{n}})$ wygenerowany został wektor odpowiedzi zgodnie z modelem $Y = \mathbb{X}\beta + \epsilon$, gdzie $\beta = (\beta_1, \dots, \beta_{950})^T, \ \beta_1 = \dots \beta_{20} = 3.5, \ i > 20 \ \beta_i = 0, \ \epsilon \sim N(0, I)$. Zbudowane zostały modele wykorzystujące $p \in \{10, 20,50,100, 200, 500, 950\}$ zmiennych. Dla każdego z modelu wyestymowana została $\beta$ metodą najmniejszych kwadratów i policzony został błąd predykcji, dwie wersje jego estymatora, $RSS$ oraz $CV$.
+
+
+\begin{center}
+Tabela 1: Obliczone wartości dla pojedyńczej próby.
+\end{center}
+
+```{r, echo = FALSE}
+n = 1000
+p = 950
+k = 20
+X = matrix(rnorm(n*p, 0, 1/sqrt(n)), nrow = n)
+
+b = c(rep(3.5, k), rep(0, p-k))
+eps = rnorm(n)
+Y = X %*% b + eps
+
+
+M_10 <- solve(t(X[,1:10])%*%X[,1:10])%*%t(X[,1:10]) #(X'X)^(-1)X'
+M_20 <- solve(t(X[,1:20])%*%X[,1:20])%*%t(X[,1:20])
+M_30 <- solve(t(X[,1:30])%*%X[,1:30])%*%t(X[,1:30])
+M_50 <- solve(t(X[,1:50])%*%X[,1:50])%*%t(X[,1:50])
+M_100 <- solve(t(X[,1:100])%*%X[,1:100])%*%t(X[,1:100])
+M_500<- solve(t(X[,1:500])%*%X[,1:500])%*%t(X[,1:500])
+M_950<- solve(t(X[,1:950])%*%X[,1:950])%*%t(X[,1:950])
+
+
+#nrow(M_10)
+
+#estymacja m najw kwadratow
+
+estym <- function(x,y){ #macierz planu, zm odpowiedzi
+  if (ncol(x) == 10){
+    return(M_10%*%y)
+  }
+  if (ncol(x) == 20){
+    return(M_20%*%y)
+  }
+  if (ncol(x) == 30){
+    return(M_30%*%y)
+  }
+  if (ncol(x) == 50){
+    return(M_50%*%y)
+  }
+  if (ncol(x) == 100){
+    return(M_100%*%y)
+  }
+  if (ncol(x) == 500){
+    return(M_500%*%y)
+  }
+  if (ncol(x) == 950){
+    return(M_950%*%y)
+  }
+
+}
+
+m_H <- function(x){
+  if (ncol(x) == 10){
+    return(X[,1:10]%*%M_10)
+  }
+  if (ncol(x) == 20){
+    return(X[,1:20]%*%M_20)
+  }
+  if (ncol(x) == 30){
+    return(X[,1:30]%*%M_30)
+  }
+  if (ncol(x) == 50){
+    return(X[,1:50]%*%M_50)
+  }
+  if (ncol(x) == 100){
+    return(X[,1:100]%*%M_100)
+  }
+  if (ncol(x) == 500){
+    return(X[,1:500]%*%M_500)
+  }
+  if (ncol(x) == 950){
+    return(X[,1:950]%*%M_950)
+  }
+  
+}
+
+
+p_i <- c(10,20,30,50,100,500,950)
+PE_i <- c()
+RSS_i <- c()
+PE_1i <- c()
+PE_2i <- c()
+CV_i <- c()
+
+s <- 1
+for(p in p_i){
+  hat_b <- estym(X[,1:p], Y)
+  hat_y <- X[,1:p]%*% hat_b
+  PE <- sum((-X[,1:p]%*%b[1:p] +rnorm(1000)+hat_y)^2)
+  RSS <- sum((Y-hat_y)^2)
+  PE_1 <- RSS + 2*s*p
+  PE_2 <- RSS + 2/(n-p)*RSS*p
+  CV <- sum(((Y - hat_y)/(1-diag(m_H(X[,1:p]))))^2)
+  PE_i <- c(PE_i, PE)
+  RSS_i <- c(RSS_i, RSS)
+  PE_1i <- c(PE_1i, PE_1)
+  PE_2i <- c(PE_2i, PE_2)
+  CV_i <- c(CV_i, CV)
+  
+}
+
+
+df <- data.frame(
+  p = round(c(10,20,30,50,100,500,950),2),
+  PE = round(PE_i,2),
+  RSS = round(RSS_i,2),
+  h_PE1 = round(PE_1i,2),
+  h_PE2 = round(PE_2i,2),
+  CV = round(CV_i,2)
+)
+col_names <- c(
+  expression(p), 
+  expression(PE), 
+  expression(RSS), 
+  bquote(widehat(PE[1])), 
+  bquote(widehat(PE[2])), 
+  expression(CV)
+)
+colnames(df) <- c("$p$", "$PE$", "$RSS$", "$\\widehat{PE}_1$", "$\\widehat{PE}_2$", "$CV$")
+knitr::kable(
+  df, 
+  booktabs = TRUE,
+  escape = FALSE, format = "latex"
+) %>%
+  kable_styling(latex_options = c("striped","hold_position"))
+
+```
+
+Z tabeli możemy odczytać, że model zbudowany na modelu wykorzystującym $20$ pierwszych kolumn oryginalnej macierzy planu okazuje się najlepszy pod wzlędem wszystkich estymatorów $PE$. Dla $p = 30$ mamy zbliżone wartości, ten model również wypada dobrze. Wraz ze wzrostem $p$ obliczona wartość $PE$ oraz estymatory $PE$ wzrastają, dla mniejszego $p = 10$ również są większe. Możemy również odczytać, że $RSS$ nie jest dobrą miarą jakości modelu, wraz z rozszerzaniem macierzy planu, nawet o nieistotne zmienne, ta wartość maleje.
+\newline
+Powyższy eksperyment został powtórzony $100$ razy i zostały utworzone wykresy pudełkowe wartości bezwzględnej różnicy między prawdziwą wartością statystyki $PE$, a jej estymatorem (Rysunek 1.). Dzięki wykresom możemy zauważyć jak słabo estymator $CV$ radzi sobie dla dużej liczby kolumn macierzy planu. Dla $p = 950$ $|PE-CV|$ osiąga bardzo duże wartości. Można zauważyć, że dla mniejszej liczby zmiennych estymator $\widehat{PE}_2$ oraz $CV$ wypadają podobnie, jak $\widehat{PE}_1$, jednak dla $p = 500$ $\widehat{PE}_2$ wypada nieco gorzej, a $CV$ osiąga już duże wartości. Dla $p = 950$ $CV$ oraz $\widehat{PE}_2$ wypadają znacznie gorzej niż $\widehat{PE}_1$. 
+
+
+![](C:/Users/Madzia/Desktop/ADZD/Lista3/boxplot.png){height=400px}
+
+\begin{center}
+Rysunek 1: Wykresy pudełkowe wartości bezwzględnej różnicy między $PE$ a estymatorem.
+\end{center}
+
+## Zadanie 2
+
+Zastosujemy $\textit{AIC, BIC, RIC, mBIC}$ i $\textit{mBIC2}$ do identyfikacji istotnych zmiennych w bazach danych składających się z $p \in \{50, 100, 200, 500, 950\}$ zmiennych. Policzone zostały liczby prawdziwych i fałszywych odkryć oraz błąd estymacji wektora $\mathbb{E}Y = X\beta$.
+
+
+```{r, echo = FALSE, include = FALSE}
+## FUNKCJE AIC BIC mBIC RIC mBIC2
+
+aic_fun <- function(dane){
+  wyn_aic=fast_forward(dane, crit='aic')
+  ind_aic=sort(as.numeric(wyn_aic$model))
+  TD_aic=sum(ind_aic<=20)
+  FD_aic=sum(ind_aic>20)
+  Power_aic=TD_aic/20
+  FDP_aic=FD_aic/max(length(ind_aic), 1)
+  X_p <- X_k[, ind_aic]
+  beta_est_p <- as.vector(solve(t(X_p)%*%X_p)%*%t(X_p)%*%Y)
+  Y_daszek_p <- as.vector(X_p%*%beta_est_p)
+  SE_aic <- sum((Y_daszek_p-X%*%beta)^2)
+  aic <- c(TD_aic, FD_aic, Power_aic, FDP_aic, SE_aic)
+  return(aic)
+}
+
+bic_fun <- function(dane){
+  wyn_bic=fast_forward(dane, crit='bic')
+  ind_bic=sort(as.numeric(wyn_bic$model))
+  TD_bic=sum(ind_bic<=20)
+  FD_bic=sum(ind_bic>20)
+  Power_bic=TD_bic/20
+  FDP_bic=FD_bic/max(length(ind_bic), 1)
+  X_p <- X_k[, ind_bic]
+  beta_est_p <- as.vector(solve(t(X_p)%*%X_p)%*%t(X_p)%*%Y)
+  Y_daszek_p <- as.vector(X_p%*%beta_est_p)
+  SE_bic <- sum((Y_daszek_p-X%*%beta)^2)
+  bic <- c(TD_bic, FD_bic, Power_bic, FDP_bic, SE_bic)
+  return(bic)
+}
+
+ric_fun <- function(dane){
+  wyn_ric=fast_forward(dane, crit='mbic', const=sqrt(n))
+  ind_ric=sort(as.numeric(wyn_ric$model))
+  TD_ric=sum(ind_ric<=20)
+  FD_ric=sum(ind_ric>20)
+  Power_ric=TD_ric/20
+  FDP_ric=FD_ric/max(length(ind_ric), 1)
+  X_p <- X_k[, ind_ric]
+  beta_est_p <- as.vector(solve(t(X_p)%*%X_p)%*%t(X_p)%*%Y)
+  Y_daszek_p <- as.vector(X_p%*%beta_est_p)
+  SE_ric <- sum((Y_daszek_p-X%*%beta)^2)
+  ric <- c(TD_ric, FD_ric, Power_ric, FDP_ric, SE_ric)
+  return(ric)
+}
+
+mbic_fun <- function(dane){
+  wyn_mbic=fast_forward(dane, crit='mbic')
+  ind_mbic=sort(as.numeric(wyn_mbic$model))
+  TD_mbic=sum(ind_mbic<=20)
+  FD_mbic=sum(ind_mbic>20)
+  Power_mbic=TD_mbic/20
+  FDP_mbic=FD_mbic/max(length(ind_mbic), 1)
+  X_p <- X_k[, ind_mbic]
+  beta_est_p <- as.vector(solve(t(X_p)%*%X_p)%*%t(X_p)%*%Y)
+  Y_daszek_p <- as.vector(X_p%*%beta_est_p)
+  SE_mbic <- sum((Y_daszek_p-X%*%beta)^2)
+  mbic <- c(TD_mbic, FD_mbic, Power_mbic, FDP_mbic, SE_mbic)
+  return(mbic)
+}
+
+mbic2_fun <- function(dane){
+  wyn_mbic2=fast_forward(dane, crit='mbic2')
+  ind_mbic2=sort(as.numeric(wyn_mbic2$model))
+  TD_mbic2=sum(ind_mbic2<=20)
+  FD_mbic2=sum(ind_mbic2>20)
+  Power_mbic2=TD_mbic2/20
+  FDP_mbic2=FD_mbic2/max(length(ind_mbic2), 1)
+  X_p <- X_k[, ind_mbic2]
+  beta_est_p <- as.vector(solve(t(X_p)%*%X_p)%*%t(X_p)%*%Y)
+  Y_daszek_p <- as.vector(X_p%*%beta_est_p)
+  SE_mbic2 <- sum((Y_daszek_p-X%*%beta)^2)
+  mbic2 <- c(TD_mbic2, FD_mbic2, Power_mbic2, FDP_mbic2, SE_mbic2)
+  return(mbic2)
+}
+
+
+n <- 1000
+p <- 950
+X <- matrix(rnorm(n*p, 0, 1/sqrt(1000)), ncol=p, nrow=n)
+beta <- c(rep(3.5, 20), rep(0, p-20))
+epsilon <- rnorm(n)
+Y <- as.vector(X%*%beta+epsilon)
+epsilon_gwiazdka <- rnorm(n)
+
+zad_2 <- function(k){
+  X_k = X[,1:k]
+  d <- prepare_data(Y, X_k)
+  AIC <- round(aic_fun(d),3)
+  BIC <- round(bic_fun(d),3)
+  RIC <- round(ric_fun(d),3)
+  mBIC <- round(mbic_fun(d),3)
+  mBIC2 <- round(mbic2_fun(d),3)
+  wyniki <- t(cbind(AIC, BIC, RIC, mBIC, mBIC2))
+  return(wyniki)
+}
+
+X_k <- X[, 1:50]
+zad_2_50 <- zad_2(50)
+X_k <- X[, 1:200]
+zad_2_200 <- zad_2(200)
+X_k <- X[, 1:100]
+zad_2_100 <- zad_2(100)
+X_k <- X[, 1:500]
+zad_2_500 <- zad_2(500)
+X_k <- X[, 1:950]
+zad_2_950 <- zad_2(950)
+#as.data.frame(zad_2_50)
+
+
+```
+
+\begin{center}
+Tabela 2: Obliczone wartości dla różnych kryteriów informacyjnych.
+\end{center}
+
+
+```{r, echo = FALSE}
+#colnames(zad_2_50) <- c("TD", "FD", "Power", "FDR", "SE")
+#knitr::kable(zad_2_50, caption = "p = 50")
+
+
+#colnames(zad_2_100) <- c("TD", "FD", "Power", "FDR", "SE")
+#knitr::kable(zad_2_100, caption = "p = 100")
+
+
+#knitr::kable(zad_2_50_100)
+
+
+#colnames(zad_2_200) <- c("TD", "FD", "Power", "FDR", "SE")
+#knitr::kable(zad_2_200, caption = "p = 200")
+
+#colnames(zad_2_500) <- c("TD", "FD", "Power", "FDR", "SE")
+#knitr::kable(zad_2_500, caption = "p = 500")
+
+#colnames(zad_2_950) <- c("TD", "FD", "Power", "FDR", "SE")
+
+
+zad_2_50_100 <- cbind(zad_2_50, zad_2_100)
+colnames(zad_2_50_100) <- c("TD", "FD", "Power", "FDR", "SE","TD", "FD", "Power", "FDR", "SE")
+
+knitr::kable(zad_2_50_100, booktabs = TRUE, longtable = TRUE, format = "latex")%>%
+  kable_styling(latex_options = c("striped","hold_position")) %>%
+  add_header_above(c(" " = 1, "p = 50" = 5, "p = 100" = 5))
+
+zad_2_500_950 <- cbind(zad_2_500, zad_2_950)
+colnames(zad_2_500_950) <- c("TD", "FD", "Power", "FDR", "SE","TD", "FD", "Power", "FDR", "SE")
+
+knitr::kable(zad_2_500_950, booktabs = TRUE, longtable = TRUE, format = "latex")%>%
+  kable_styling(latex_options = c("striped","hold_position")) %>%
+  add_header_above(c(" " = 1, "p = 500" = 5, "p = 950" = 5))
+
+
+
+
+
+```
+
+W tabeli zostały pominięte wyniki dla $p = 200$, są one bardzo zbliżone do wartości statystyk dla $p = 500$.  
+Liczba prawdziwych odkryć jest w każdym z przypadków maksymalna ($=20$) dla kryterium $AIC$, w przypadku kryterium $BIC$ również jest to liczba stała dla każdego $p$, ale nie został osiągnięty maksymalny wynik. Pozostałe kryteria: $RIC, mBIC, mBIC2$ wraz ze wzrostem liczby zmiennych objaśniających posiadają coraz mniejszą liczbę prawdziwych odkryć. Najgorzej wśród nich wypada $mBIC$.\newline
+W porównaniu do pozostałych kryteriów $AIC$ ma bardzo dużą liczbę fałszywych odkryć dla każdego przypadku. Ze wzrostem $p$ obliczona wartość $FD$ rośnie dla kryterium $BIC$, ale nie jest to tak gwałtowy wzrost, jak w przypadku $AIC$. Dla pozostałych kryteriów liczba fałszywych odkryć dla każdej liczby $p$ jest bardzo mała. \newline
+Ze zwiększającą się liczbą regresorów można zauważyć, że dla każdego kryterium zwiększają się wartości $SE$. Najgorzej wśród wszystkich kryteriów wypada $mBIC2$ - ma on największe $SE$ za każdym razem. Dla mniejszej liczby $p$ najlepiej wypadają $AIC, RIC$ oraz $BIC$, dla większych $p$ zauważalnie najlepiej wypada kryterium $BIC$.
+
+
+Powyższy eksperyment został powtórzony $100$ razy, wyniki w tabeli przedstawiają uśrednioną moc, estymowane $FDR$ oraz estymowane $MSE$.
+```{r, echo = FALSE, include = FALSE}
+
+rep = 10
+zad_3 <- function(k){
+  wynik_moc <- matrix(NA, nrow = 5, ncol = rep)
+  wynik_FDR<- matrix(NA, nrow = 5, ncol = rep)
+  wynik_SE<- matrix(NA, nrow = 5, ncol = rep)
+  for(i in 1:rep){
+    epsilon <- rnorm(n)
+    Y <- X %*% beta + epsilon
+    X_k <- X[,1:k]
+    wynik_moc[,i] <- zad_2(k)[,3]
+    wynik_FDR[,i] <- zad_2(k)[,4]
+    wynik_SE[,i] <- zad_2(k)[,5]
+  }
+  result <- cbind(rowMeans(wynik_moc),rowMeans(wynik_FDR), rowMeans(wynik_SE))
+  return(result)
+  
+}
+
+#zad_3_50 <- zad_3(50)
+#zad_3_100 <- zad_3(100)
+#zad_3_200 <- zad_3(200)
+#zad_3_500 <- zad_3(500)
+#zad_3_950 <- zad_3(950)
+
+
+```
+
+\begin{center}
+Tabela 3: Uśrednione wartości dla różnych kryteriów informacyjnych przy 100 krotnym powtórzeniu.
+\end{center}
+
+```{r, echo = FALSE}
+#zad_3_50 <- zad_3(50)
+#zad_3_100 <- zad_3(100)
+#zad_3_200 <- zad_3(200)
+#zad_3_500 <- zad_3(500)
+#zad_3_950 <- zad_3(950)
+
+
+
+
+#zad_3_wynik <- cbind(zad_3_50,zad_3_100,zad_3_200,zad_3_500,zad_3_950)
+#colnames(zad_3_wynik) <- c("Power", "FDR", "SE", "Power", "FDR", "SE", "Power", "FDR", "SE","Power", "FDR", "SE","Power", "FDR", "SE")
+
+
+#rownames(zad_3_wynik) <- c("AIC", "BIC", "RIC", "mBIC", "mBIC2")
+
+
+zad_2_100 <- read.csv("C:/Users/Madzia/Desktop/ADZD/Lista3/wynikii_v4_100.csv")
+#colnames(zad_2_100) <- c("","Power", "FDR", "SE", "Power", "FDR", "SE", "Power", "FDR", "SE","Power", "FDR", "SE","Power", "FDR", "SE")
+t1 <- zad_2_100[,1:10]
+t2 <- zad_2_100[,c(1,11:16)]
+colnames(t1) <-  c("","Power", "FDR", "MSE", "Power", "FDR", "MSE", "Power", "FDR", "MSE")
+colnames(t2) <- c("","Power", "FDR", "MSE", "Power", "FDR", "MSE")
+#knitr::kable(zad_2_100, booktabs = TRUE, longtable = TRUE)%>%
+#  kable_styling(latex_options = c("striped","hold_position")) %>%
+#  add_header_above(c(" " = 1, "p = 50" = 3, "p = 100" = 3, "p = 200" = 3, "p = 500" = 3, "p = 950" = 3))
+
+
+knitr::kable(t1, booktabs = TRUE, longtable = TRUE, format = "latex") %>%
+  kable_styling(latex_options = c("striped","hold_position")) %>%
+  add_header_above(c(" " = 1, "p = 50" = 3, "p = 100" = 3, "p = 200" = 3))
+knitr::kable(t2, booktabs = TRUE, longtable = TRUE, format = "latex") %>%
+  kable_styling(latex_options = c("striped","hold_position")) %>%
+  add_header_above(c(" " = 1, "p = 500" = 3, "p = 950" = 3))
+
+```
+Tak jak w przypadku, gdy eksperyment został powtórzony tylko raz, największą moc otrzymujemy przy zastosowaniu kryterium $AIC$, a nieco gorzej wypada $BIC$. Dla pozostałych kryteriów, wraz ze wzrostem liczby regresorów, zmniejsza się ta statystyka, najgorzej wśród nich wypadają kryteria $mBIC$ oraz $mBIC2$. \newline
+Jeżeli chodzi o wartość statystyki $FDR$ najgorzej wypada kryterium $AIC$, dla niego ta wartość jest największa wśród innych kryteriów oraz rośnie wraz ze wzrostem liczby regresorów. Dla pozostałych kryteriów wartość $FDR$ jest bliska $0$, w przypadku $BIC$ rośnie ze wzrostem regresorów, ale nie tak gwałtownie, jak $AIC$. \newline
+W przypadku wartości statystyki $MSE$ najgorzej wypada kryterium $mBIC$, a ze zwiększającą się liczbą zmiennych objaśniających $mBIC2$ zbliża się do tych samych wyników. Dla małych wartości $p$ najlepiej radzi sobie $AIC$, ze wzrostem $p$ lepiej radzi sobie $BIC$.
+
+## Zadanie 3
+Powyższe zadania zostaną powtórzone w sytuacji, gdy $n = 5000$. Dla obliczeń związanych z kryteriami informacyjnymi pominięta została liczba regresorów $p = 50$, ponieważ ten przypadek generował błąd. \newpage
+
+
+
+\begin{center}
+Tabela 4: Obliczone wartości dla pojedyńczej próby, $n = 5000$.
+\end{center}
+
+```{r, echo = FALSE}
+n = 5000
+p = 950
+k = 20
+#X = matrix(rnorm(n*p, 0, 1/sqrt(n)), nrow = n)
+
+#b = c(rep(3.5, k), rep(0, p-k))
+#eps = rnorm(n)
+#Y = X %*% b + eps
+
+
+#M_10 <- solve(t(X[,1:10])%*%X[,1:10])%*%t(X[,1:10]) #(X'X)^(-1)X'
+#M_20 <- solve(t(X[,1:20])%*%X[,1:20])%*%t(X[,1:20])
+#M_30 <- solve(t(X[,1:30])%*%X[,1:30])%*%t(X[,1:30])
+#M_50 <- solve(t(X[,1:50])%*%X[,1:50])%*%t(X[,1:50])
+#M_100 <- solve(t(X[,1:100])%*%X[,1:100])%*%t(X[,1:100])
+#M_500<- solve(t(X[,1:500])%*%X[,1:500])%*%t(X[,1:500])
+#M_950<- solve(t(X[,1:950])%*%X[,1:950])%*%t(X[,1:950])
+p_i <- c(10,20,30,50,100,500,950)
+PE_i <- c()
+RSS_i <- c()
+PE_1i <- c()
+PE_2i <- c()
+CV_i <- c()
+
+s <- 1
+#for(p in p_i){
+#  hat_b <- estym(X[,1:p], Y)
+#  hat_y <- X[,1:p]%*% hat_b
+#  PE <- sum((-X[,1:p]%*%b[1:p] +rnorm(5000)+hat_y)^2)
+#  RSS <- sum((Y-hat_y)^2)
+#  PE_1 <- RSS + 2*s*p
+#  PE_2 <- RSS + 2/(n-p)*RSS*p
+#  CV <- sum(((Y - hat_y)/(1-diag(m_H(X[,1:p]))))^2)
+#  PE_i <- c(PE_i, PE)
+#  RSS_i <- c(RSS_i, RSS)
+#  PE_1i <- c(PE_1i, PE_1)
+#  PE_2i <- c(PE_2i, PE_2)
+#  CV_i <- c(CV_i, CV)
+  
+#}
+
+
+#df <- data.frame(
+#  p = round(c(10,20,30,50,100,500,950),2),
+#  PE = round(PE_i,2),
+#  RSS = round(RSS_i,2),
+#  h_PE1 = round(PE_1i,2),
+#  h_PE2 = round(PE_2i,2),
+#  CV = round(CV_i,2)
+#)
+
+df <- read.csv("C:/Users/Madzia/Desktop/ADZD/Lista3/tab1_5000.csv")
+df <- df[,-1]
+col_names <- c(
+  expression(p), 
+  expression(PE), 
+  expression(RSS), 
+  bquote(widehat(PE[1])), 
+  bquote(widehat(PE[2])), 
+  expression(CV)
+)
+colnames(df) <- c("$p$", "$PE$", "$RSS$", "$\\widehat{PE}_1$", "$\\widehat{PE}_2$", "$CV$")
+knitr::kable(
+  df, 
+  booktabs = TRUE,
+  escape = FALSE, format = "latex"
+) %>%
+  kable_styling(latex_options = c("striped","hold_position"))
+
+
+```
+
+Prawie wszystkie wyniki są znacząco większe niż, gdy $n = 1000$, dzieję się tak, ponieważ $p$ jest zacząco mniejsze od $n$. Estymatory najbliżej wartości statystyki $PE$ zostały policzone dla modelu zbudowanego na $10$ regresorach, ten model ma najmniejszą wartość $PE$. Można z tabeli zauważyć, że nie ma żadnej znacząco odbiegającej wartości, tak jak dla przypadku $n =1000$. 
+
+
+![](C:/Users/Madzia/Desktop/ADZD/Lista3/5000_boxplot.png){height=300px}
+
+\begin{center}
+Rysunek 2: Wykresy pudełkowe wartości bezwzględnej różnicy między $PE$ a estymatorem, $n = 5000$.
+\end{center}
+
+Z wykresów pudełkowych możemy odczytac, że mniejwięcej wszystkie estymatory $PE$ zachowują się dość podobnie. Model z najbliższymi do $PE$ wartościami estymatorów, to model zawierający $10$ zmiennych objaśniających. Zgadza się ta obserwacja z wynikami wyliczonymi w Tabeli 4. 
+
+\begin{center}
+Tabela 5:  Obliczone wartości dla różnych kryteriów informacyjnych, $n = 5000$.
+\end{center} 
+
+```{r, echo = FALSE, include = FALSE}
+
+n <- 5000
+p <- 950
+X <- matrix(rnorm(n*p, 0, 1/sqrt(5000)), ncol=p, nrow=n)
+beta <- c(rep(3.5, 20), rep(0, p-20))
+epsilon <- rnorm(n)
+Y <- as.vector(X%*%beta+epsilon)
+epsilon_gwiazdka <- rnorm(n)
+
+zad_2 <- function(k){
+  X_k = X[,1:k]
+  d <- prepare_data(Y, X_k)
+  AIC <- round(aic_fun(d),3)
+  BIC <- round(bic_fun(d),3)
+  RIC <- round(ric_fun(d),3)
+  mBIC <- round(mbic_fun(d),3)
+  mBIC2 <- round(mbic2_fun(d),3)
+  wyniki <- t(cbind(AIC, BIC, RIC, mBIC, mBIC2))
+  return(wyniki)
+}
+
+#X_k <- X[, 1:50]
+#zad_2_50 <- zad_2(50)
+X_k <- X[, 1:200]
+zad_2_200 <- zad_2(200)
+X_k <- X[, 1:100]
+zad_2_100 <- zad_2(100)
+X_k <- X[, 1:500]
+zad_2_500 <- zad_2(500)
+X_k <- X[, 1:950]
+zad_2_950 <- zad_2(950)
+
+zad_2_50_100 <- cbind(zad_2_100, zad_2_200)
+colnames(zad_2_50_100) <- c("TD", "FD", "Power", "FDR", "SE","TD", "FD", "Power", "FDR", "SE")
+
+
+
+
+```
+
+```{r, echo = FALSE}
+
+knitr::kable(zad_2_50_100, booktabs = TRUE, longtable = TRUE, format = "latex")%>%
+  kable_styling(latex_options = c("striped","hold_position")) %>%
+  add_header_above(c(" " = 1, "p = 100" = 5, "p = 200" = 5))
+
+zad_2_500_950 <- cbind(zad_2_500, zad_2_950)
+colnames(zad_2_500_950) <- c("TD", "FD", "Power", "FDR", "SE","TD", "FD", "Power", "FDR", "SE")
+```
+
+\newpage
+
+```{r, echo = FALSE}
+knitr::kable(zad_2_500_950, booktabs = TRUE, longtable = TRUE, format = "latex")%>%
+  kable_styling(latex_options = c("striped","hold_position")) %>%
+  add_header_above(c(" " = 1, "p = 500" = 5, "p = 950" = 5))
+
+
+```
+
+Wyniki są zbliżone do wyników z tabeli 2. dla $n = 1000$. Kryterium $AIC$ osiąga w każdym z przypadków maksymalną liczbę prawdziwych odkryć, ale za każdym razem osiąga też największą liczbę fałszywych odkryć. Ze wzrostem liczby regresorów liczba fałszywych odkryć kryteriów $AIC$ i $BIC$ rośnie. Najmniejsza liczba prawdziwych odkryć dla każdego $p$ wychodzi dla kryterium $mBIC$, gdzie $mBIC2$ wypada niewiele lepiej. Pod względem $FDR$ ponownie najgorzej wychodzi kryterium $AIC$, a przy większej liczbie zmiennych objaśniających ta statystyka dla kryterium $BIC$ również rośnie. Kryterium $mBIC$ wypada również najgorzej pod względem statystyki $SE$. Wnioski z tabeli 2. i tabeli 5. są identyczne.
+
+\begin{center}
+Tabela 6: Uśrednione wartości dla różnych kryteriów informacyjnych przy 100 krotnym powtórzeniu, $n = 5000$.
+\end{center} 
+```{r, echo = FALSE}
+
+
+zad_2_100 <- read.csv("C:/Users/Madzia/Desktop/ADZD/Lista3/wynikii_v4_100_5000.csv")
+#colnames(zad_2_100) <- c("","Power", "FDR", "SE", "Power", "FDR", "SE", "Power", "FDR", "SE","Power", "FDR", "SE","Power", "FDR", "SE")
+t1 <- zad_2_100[,c(1:7,11:13)]
+colnames(t1) <-  c("","Power", "FDR", "MSE", "Power", "FDR", "MSE", "Power", "FDR", "MSE")
+#knitr::kable(zad_2_100, booktabs = TRUE, longtable = TRUE)%>%
+#  kable_styling(latex_options = c("striped","hold_position")) %>%
+#  add_header_above(c(" " = 1, "p = 50" = 3, "p = 100" = 3, "p = 200" = 3, "p = 500" = 3, "p = 950" = 3))
+
+
+knitr::kable(t1, booktabs = TRUE, longtable = TRUE, format = "latex") %>%
+  kable_styling(latex_options = c("striped","hold_position")) %>%
+  add_header_above(c(" " = 1, "p = 100" = 3, "p = 200" = 3, "p = 950" = 3))
+
+
+```
+W tabeli pominięte zostały wyniki dla $p=500$, ponieważ zbliżone były do wyników dla $p = 950$. \newline
+Ponownie, jak przy jednokrotnym eksperymencie, największą moc otrzymujemy przy zastosowaniu kryterium $AIC$, ale również wtedy otrzymujemy najwiekszą wartość statystyki $FDR$. Najgorzej pod względem $MSE$ wypada krterium $mBIC$. Ponownie wnioski są podobne, jak do tabeli 3, gdzie $n = 1000$.
+
+## Podsumowanie
+
+* Dla mniejszej liczby obserwacji estymatory $\widehat{PE}_1$ oraz $\widehat{PE}_2$ przy rosnącej liczbie regresorów radzą sobie znacznie lepiej niż $CV$ pod względem wartości bezwzględnej między prawdziwą watością $PE$ a estymatorem. Dla większej liczby obserwacji wszystkie estymatory radzą sobie podobnie.  
+* Z rosnącą liczbą regresorów obliczone wartości $FDR$ rosną dla kryteriów $AIC$ i $BIC$ dla $n = 5000$ oraz $n = 1000$. Najlepiej z tą statystyką radzi sobie kryterium $mBIC$.  
+* W przypadku kryteriów $RIC, mBIC$ i $mBIC2$ ich moc maleje ze wzrostem liczby zmiennych objaśniających i osiąga bardzo małe wartości dla $n = 5000$ oraz $n = 1000$. Kryterium $AIC$ zawsze ma maksymalną moc albo moc bliską wartości $1$.  
+* Nie ma znaczącej różnicy we wnioskach dotyczących kryteriów informacyjnych między $n = 5000$, a $n = 1000$.
+

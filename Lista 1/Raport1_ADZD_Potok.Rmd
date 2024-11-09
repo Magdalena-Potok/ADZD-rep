@@ -1,0 +1,267 @@
+---
+title: "Raport 1"
+author: "Magdalena Potok"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r, echo = FALSE, message = FALSE, error = FALSE, warning = FALSE}
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(ggplot2)
+library(ggtext)
+library(formatR)
+library(knitr)
+library(tidyr)
+library(gridExtra)
+library(Rcpp)
+library(MASS)
+options(scipen=999)
+
+```
+Celem raportu jest przeprowadzenie analizy na danych wygenerowanych z modelem regresji liniowej, badając wpływ różnych wielkości modelu na estymatory, testy istotności, szerokość przedziałów ufności, oraz liczbę prawdziwych i fałszywych odkryć. Dodatkowo, porównanie wyników zastosowania różnych korekt na wielokrotne testowanie oraz oszacowanie wskaźników FWER i FDR dla różnych procedur testowania. \newline
+
+Wygenerowana została macierz planu $\mathbb{X}_{1000x950}$ tak, że jej elementy są niezależnymi zmiennymi z rozkładu normalnego $N(0, \sigma = \frac{1}{\sqrt{1000}})$. Następnie wygenerowany został wektor zmiennej odpowiedzi zgodnie z modelem
+$$ Y = \mathbb{X}\beta + \epsilon,$$
+gdzie $\beta = (3,3,3,3,3,0,...,0)^T$, $\epsilon \sim N(0,I)$. 
+
+```{r}
+set.seed(567)
+X = matrix(rnorm(1000*950, 0, 1/sqrt(1000)), nrow = 1000)
+beta = c(5,5,5,5,5,rep(0,945))
+eps = rnorm(100)
+Y = X %*% beta + eps
+```
+
+W niniejszym raporcie została przeprowadzona analiza w oparciu o modele wykorzystjące:
+(i) pierwszych 5 zmiennych;  
+(ii) pierwszych 10 zmiennych;  
+(iii) pierwszych 20 zmiennych;  
+(iv) pierwszych 100 zmiennych;  
+(v) pierwszych 500 zmiennych;  
+(vi) pierwszych 950 zmiennych.
+
+## Zadanie 1
+**(a)** Dla każdego z modeli (i)-(vi) wyznaczę estymator najmniejszych kwadratów dla wektora $\beta$ i wykonam testy istotności jego elementów, wyniki zostały przedstawione w tabeli
+
+```{r, echo = FALSE}
+
+# Zaktualizowana funkcja do wykonania testów istotności poszczególnych współczynników
+test_istotnosci <- function(model, alpha = 0.05) {
+  coef_summary <- summary(model)$coefficients[-1, ]  # Usunięcie współczynnika interceptu
+  p_values <- coef_summary[, "Pr(>|t|)"]
+  
+  # Testy istotności: TRUE dla istotnych współczynników, FALSE w przeciwnym razie
+  significant <- p_values < alpha
+  
+  return(significant)
+}
+
+# Dopasowanie modeli i przeprowadzenie testów istotności
+models <- list()
+results <- list()
+
+# Model (i) - (vi)
+for (i in 1:6) {
+  model <- lm(Y ~ X[, 1:(ifelse(i == 6, 950, c(5, 10, 20, 100, 500)[i]))])
+  models[[i]] <- model
+  results[[i]] <- test_istotnosci(model)
+}
+
+# Tworzenie tabelki z wynikami
+table_results <- sapply(results, sum)  # Sumowanie liczby istotnych współczynników dla każdego modelu
+
+# Wyświetlenie tabelki
+table_models <- data.frame(Model = c("(i)", "(ii)", "(iii)", "(iv)", "(v)", "(vi)"))
+table_significant <- data.frame(Istotne_Wspolczynniki = table_results)
+
+# Łączenie tabel w jedną i transpozycja
+table_combined <- t(cbind(table_models, table_significant))
+
+# Wyświetlenie tabelki
+knitr::kable(table_combined, 
+             caption = "Liczba istotnych współczynników dla każdego modelu", 
+             align = "cc")
+```
+(b) Porównam jak zmienia się odchylenie standardowe estymatora $\beta_1$ i szerokość 95% przedziału ufności dla tego parametru w miarę tego jak rośnie rozważany model.
+
+```{r, echo = FALSE, warning = FALSE, fig.height = 3.5}
+
+
+# Dane
+num_vars <- c(5, 10, 20, 100, 500, 950)
+sd_beta1 <- numeric(length(num_vars))
+ci_width_beta1 <- numeric(length(num_vars))
+
+# Pętla po modelach
+for (i in seq_along(num_vars)) {
+  model <- lm(Y ~ X[, 1:num_vars[i]])
+  sd_beta1[i] <- summary(model)$coefficients[2, "Std. Error"]
+  ci <- confint(model)[2, ]
+  ci_width_beta1[i] <- diff(ci) / 2
+}
+
+
+
+# Tworzenie dataframe'u
+df_sd <- data.frame(Num_Vars = num_vars, SD_Beta1 = sd_beta1)
+df_ci <- data.frame(Num_Vars = num_vars, CI_Width_Beta1 = ci_width_beta1)
+
+# Wykres dla odchylenia standardowego estymatora beta_1
+p1 <- ggplot(df_sd, aes(x = Num_Vars))+ 
+  geom_line(aes(y = SD_Beta1, color = "Sd"), linewidth=1) + 
+  labs(
+       x = "Liczba Zmiennych w Modelu",
+       y = "Odchylenie Standardowe beta_1") +
+  theme_minimal() +
+  ylim(0,8) + 
+  theme(legend.position = "none")
+
+
+
+p2 <- ggplot(df_ci, aes(x = Num_Vars))+ 
+  geom_line(aes(y = CI_Width_Beta1, color = "CI"), linewidth=1) + 
+  labs(
+       x = "Liczba Zmiennych w Modelu",
+       y = "Szerokość Przedziału Ufności dla beta_1") +
+  theme_minimal()+
+  ylim(0,8) + 
+  theme(legend.position = "none")
+
+# Wyświetlenie obu wykresów obok siebie
+grid.arrange(p1, p2, ncol = 2, top = "Zmiana odchylenia standardowego i szerokości przedziału dla estymatora beta_1")
+
+
+```
+Możemy zauważyć, że wraz ze wzrostem zmiennych objaśniających rośnie odchylenie standardowe oraz szerokość przedziału ufności tego estymatora. Związek między odchyleniem a przedziałem jest naturalny, ponieważ szerokość przedziału ufności estymatora jest wprost związana z jego odchyleniem standardowym. W przypadku rosnącej wartości odchylenia standardowego otaz wzrostu szerokości przedziału, tym trudniej jest odrzucić hipotezę zerową $H_0$.   
+
+**(c) i (d) ** Porównam liczbę prawdziwych i fałszywych odkryć dla różnych modeli nie używając korekty, używając korekty Bonferroniego i używając korekty Benjaminiego-Hochbergana.
+
+
+```{r, echo = FALSE, fig.height = 4}
+
+
+alfa <- 0.05 # zakładamy poziom istotności na poziomie alfa = 0.05 
+n <- 1000 # wielkość próby (ilość wierszy)
+k <- 950 # ilośc zmiennych objaśniających (ilość kolumn)
+X <- matrix(rnorm(n*k, 0, 1/sqrt(n)), nrow = n, ncol = k) # macierz planu
+epsilon <- rnorm(n) # wektor błędów ze standardowego rozkładu normalnego (wartosc oczekiwana 0 i macierz kowariancji jako macierz identycznosciowa)
+beta <- c(rep(3, 5), rep(0, k-5)) # wektor slope'ów
+Y <- X%*%beta + epsilon # wektor zmiennych objaśnianych 
+
+f1 <- function(p){
+  X_p <- X[, 1:p] # wybieramy p pierwszych zmiennych objaśniających 
+  beta_est <- solve(t(X_p)%*%X_p)%*%t(X_p)%*%Y # estymator najmniejszych kwadratów dla wektora beta 
+  est_sigma_kw <- 1/(n-p)*sum((Y-X_p%*%beta_est)^2) # estymator macierzy kowariancji
+  s_beta_est <- sqrt(diag(est_sigma_kw*solve(t(X_p)%*%X_p))) # estymator odchylenia standardowego dla wektora beta
+  stat_T <- beta_est/s_beta_est # wartość statystyki T dla wektora beta
+  t_c <- qt(1-alfa/2, n-p) # wartość statystyk testowych dla wektora beta
+  conf_int_left <- beta_est-s_beta_est*t_c # lewy przedział ufności dla wektora beta
+  conf_int_right <- beta_est+s_beta_est*t_c # prawy przedział ufności dla wektora beta
+  avg_width <- conf_int_right-conf_int_left # dlugosc przedziałow ufnosci 
+  p_val <- 2*(1-pt(abs(stat_T), n-p)) # wartosci p-value dla wektora beta
+  discoveries <- sum(p_val[1:5] < alfa) # tylko 5 pierwszych zmiennych to moga byc odkrycia
+  false_discoveries <- 0 # na poczatku jest 0 falszywych odkryc
+  if (p>5){
+    false_discoveries = sum(p_val[6:p] < alfa) # potrzebujemy zeby p > 5 bo dla p = 5 nie mamy falszywych odkryc
+  }
+  discoveries_bonf <- sum(p_val[1:5] < alfa/p) # odkrycia z korekta bonfforiniego
+  false_discoveries_bonf <- 0 # na poczatku znowu 0 falszywych odkryc
+  if (p>5){
+    false_discoveries_bonf = sum(p_val[6:p] < alfa/p)
+  }
+  p_sort <- sort(p_val, index=TRUE) # sortujemy p-values z zachowaniem starych indeksów
+  BH <- p_sort$x < alfa*seq(1:p)/p # p_sort$x bierze nam p_value i sprawdza czy jest mniejsze od zastosowanej korekty BH
+  discoveries_BH <- 0 # na poczatku 0 odkryc w BH
+  false_discoveries_BH <- 0 # na poczatku 0 falszywych odkryc w BH
+  if (sum(BH) > 0){
+    max <- max(which(BH == TRUE)) # sprawdzamy maksymalna p-value dla ktorej zachodzi warunek na korekte
+    id <- p_sort$ix[1:max] # teraz odrzucamy wszystkie p-value do tej maksymalnej 
+    discoveries_BH <- sum(id <= 5) # jako odkrycia sa te mniejsze od 5 
+    false_discoveries_BH <- sum(id > 5) # jako falszywe odkrycia sa te wieksze od 5 
+  }
+  return(c(p, s_beta_est[1], avg_width[1], discoveries, false_discoveries, discoveries_bonf, false_discoveries_bonf, discoveries_BH, false_discoveries_BH))
+}
+f1_vec <- Vectorize(f1) # chcemy wsadzic jako p wektor wiec uzywamy funkcji Vectorize() aby bylo to mozliwe
+p_vec <- c(5, 10, 20, 100, 500, 950) # wektor p-value
+zad_1_odp <- data.frame(t(f1_vec(p_vec)))
+colnames(zad_1_odp) <- c("p", "s_beta_1", "width", "discoveries", "false_discoveries", "discoveries_bonf", "false_discoveries_bonf", "discoveries_BH", "false_discoveries_BH")
+
+
+
+p3 <- ggplot(zad_1_odp, aes(x=p)) +
+  geom_line(aes(y=discoveries, colour="brak"), linewidth=1) +
+  geom_line(aes(y=discoveries_bonf, colour="Bonf"), linewidth=1) +
+  geom_line(aes(y=discoveries_BH, color="BH"), linewidth=1) +
+  labs(title="Liczba prawdziwych odkryć", x="Liczba zmiennych objaśniających", y="Liczba prawdziwych odkryć", color="Korekta") +
+  theme_minimal() +
+  ylim(0, max(zad_1_odp$discoveries, zad_1_odp$discoveries_bonf, zad_1_odp$discoveries_BH)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom") 
+
+
+# Wykres dla liczby fałszywych odkryć
+p4 <- ggplot(zad_1_odp, aes(x=p)) +
+  geom_line(aes(y=false_discoveries, colour="brak"), linewidth=1) +
+  geom_line(aes(y=false_discoveries_bonf, colour="Bonf"), linewidth=1) +
+  geom_line(aes(y=false_discoveries_BH, color="BH"), linewidth=1) +
+  labs(title="Liczba fałszywych odkryć", x="Liczba zmiennych objaśniających", y="Liczba fałszywych odkryć", color="Korekta") +
+  theme_minimal() +
+  ylim(0, max(zad_1_odp$false_discoveries, zad_1_odp$false_discoveries_bonf, zad_1_odp$false_discoveries_BH)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom") 
+
+# Wyświetlenie obu wykresów obok siebie
+grid.arrange(p3, p4, ncol = 2, top = "Zmiana liczby odkryć w zależności od korekty")
+
+```
+
+Z wykresu dla prawdziwych odkryć możemy odczytać, że wraz z zwiększającą się liczbą zmiennych objaśniających maleje liczba prawdziwych odkryć w każdej z proponowanych procedur. To co się rzuca w oczy, to fakt, że wybór obu korekt oznacza, że będziemy mieć mniej prawdziwych odkryć, niż w przypadku, gdy nie stosujemy korekty.  
+Wykres fałszywych odkryć pokazuje, że w przypadku zastosowania obu korekt mamy bardzo małą, bliską zero, ilość fałszywych odkryć - niezależnie od ilości zmiennych objaśniających. W sytuacji, gdy nie mamy korekty na początku ilość fałszywych odkryć rośnie, aż $p = 500$, potem możemy zaobserwować spadek.
+
+
+## Zadanie 2
+
+Doświadczenie z 1. zadania powtórzę 1000 razy i wyznaczę dla różnych modeli:  
+\newline
+**>** Średnią wariancję estymatora $\beta_1$ i porównam z wartością teoretyczną.  
+\newline
+
+![](C:/Users/Madzia/Desktop/ADZD/Lista1/Rplot.png)
+\newline
+Wartość teoretyczna została wyliczona za pomocą odwrotnego rozkładu Wisharta. Z wykresu możemy odczytać, że wyniki symulacji są całkiem blisko wartości teoretycznej. Przy zwiększaniu się liczby zmiennych objaśniających (od $p = 500$) te wartości zaczynają się rozbiegać, wartość teoretyczna jest mniejsza. Z zwiększającą się liczbą regresorów zwiększa się średnia wariancja estymatora.  
+\newline
+**>** Średnią szerokość 95% przedziału ufności dla $\beta_1$ i porównam z teoretycznym oszacowaniem.
+
+![](C:/Users/Madzia/Desktop/ADZD/Lista1/dlx450.png)
+\newline
+W poprzednim podpunkcie przekonaliśmy się, że ze wzrostem parametru $p$ wzrsata nam średnia wariancja estymatora $\beta_1$. Naturalnie z większą wariancją zwiększa nam się szerokość przedziału ufności, co możemy odczytać z wykresu. Tym razem również do wartości $p = 500$ średnia długość teoretyczna pokrywa się z estymowaną, później zaczynają, tak jak w przypadku wariancji, od siebie odbiegać (średnia wariancja wyliczona teoretycznymi wzorami jest mniejsza).
+
+**>** Średnią liczbę prawdziwych i fałszywych odkryć dla różnych procedur testowania.
+
+
+![](C:/Users/Madzia/Desktop/ADZD/Lista1/lox450.png)
+Skupmy się wpierw na wykresie z średnią liczbą prawdziwych odkryć. Możemy zauważyć, że bez używania korekt mamy więcej prawdziwych odkryć niż gdy używamy korekt. Co oznacza, że zwykłe testowanie dobrze sprawdza się, jeśli zależy nam na zidentyfikowaniu istotnych zmiennych. Natomiast wykres średniej fałszywych odkryć tłumaczy nam, dlaczego potrzebne są korekty. Pokazuje on, że zwykłe testowanie wskazuje wiele zmiennych jako istotne, podczas, gdy tak naprawdę są nieznaczące. Jednak przy użyciu korekt Bonferoniego lub Benjaminiego-Hochberga liczba fałszywych odkryć jest znacząco mniejsza, bliska 0. Te metody są preferowane nad zwykłym testowaniem, ponieważ eliminują fałszywie istotne zmienne. Jednakże, kosztem tego jest mniejsza liczba faktycznie istotnych zmiennych, które są identyfikowane. Przyjrzymy się teraz liczbie fałszywych odkryć na osobnym wykresie, ponieważ wspólna skala na jednym wykresie nie pozwala na dokładne przeanalizowanie zależności.
+
+![](C:/Users/Madzia/Desktop/ADZD/Lista1/Rplot15.png)
+\newline
+Metoda Bonferroniego charakteryzuje się najmniejszą liczbą fałszywych odkryć, co wynika z jej konserwatywnej natury. Z kolei metoda BH, choć może mieć nieco więcej fałszywych odkryć, to zazwyczaj identyfikuje więcej prawdziwych zmiennych.
+
+
+**>** Estymatory FWER i FDR dla procedur testowania bez korekty oraz z korektą Bonferoniego i BH.
+
+![](C:/Users/Madzia/Desktop/ADZD/Lista1/Rplot16.png)
+Zauważmy, że w przypadku, gdy testujemy bez korekt wartość FWER bardzo szybko zbiega do $1$, co jest zdecydowanie więcej niż przyjęty poziom $\alpha = 0.05$, wynik jest bardzo zbliżony do wyliczeń teoretycznych. Gdy popatrzymy na korektę Bonferroniego w przypadku FWER, jak wiemy z wykładu, jest ona kontrolowana na poziomie $\alpha$, z wykresu widzimy, że ta wartość jest o wiele mniejsza, bliska zero. Ta wartość również zgadza się z teoretycznymi obliczeniami. Korzystając z korekty Bonferroniego, minimalizujemy ryzyko popełnienia błędów typu I, ale kosztem mniejszej czułości testu na wykrycie rzeczywistych efektów. Metoda Benjamini-Hochberga nie kontroluje FWER, co możemy odczytać z wykresu. Jest moment na wykresie, kiedy wartość FWER dla tej metody jest większa niż $0.05$, jednak z zwiększającą się liczbą zmiennych objaśniających wartość FWER, tak jak dla Bonf (ale trochę wolniej), zbiega do bardzo małych wartości, bliskich 0. \newline
+Wartość FDR, czyli proporcja fałszywych odkryć do ilości odrzuconych hipotez, w przypadku obu korekt jest bardzo mała, wynika to z tego, że obie są kontrolowane na poziomie $\alpha = 0.05$. Na początku ta wartość w przypadku korekty BH jest więkksza, ale ze wzrostem zmiennych objaśniających te wartości zaczynają być bardzo bliskie sobie. W przypadku, gdy nie stosujemy korekt wartość FDR rośnie, ta sytuacja jest niepożądana. 
+
+# Wnioski
+
+***-*** Wzrost liczby zmiennych objaśniających wpływa na wariancję estymatora $\beta_1$, a co za tym idzie na jego szerokość przedziału ufności. Zaobserwowaliśmy za równo w przypadku 1 powtórzenia eksperymentu, jak i gdy wykonaliśmy $1000$ powtórzeń. Tracimy więc dokładność w estymacji parametru.  
+***-*** Testowanie bez korekty, z uwagi na ilość fałszywych odkryć, okazuje się mało skutecznym testowaniem i może skutkować nieprawidłowymi wnioskami.  
+***-*** Korekty, takie jak Bonferroni czy metoda Benjamini-Hochberga, mają istotne znaczenie w ograniczaniu liczby fałszywych odkryć. Po ich zastosowaniu średnia liczba fałszywych odkryć spada praktycznie do zera. Jednakże, stosowanie korekt może również skutkować redukcją liczby faktycznie istotnych zmiennych.  
+***-*** Wybór odpowiedniej metody korekty zależy od kontekstu badania oraz preferencji badacza, uwzględniając zarówno kontrolę błędów, jak i zachowanie mocy statystycznej testu.
+
+
+
+

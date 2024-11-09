@@ -1,0 +1,452 @@
+---
+title: "Raport 2 — Analiza dużych zbiorów danych"
+author: "Magdalena Potok"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+Celem raportu jest porównanie estymatorów $\beta$ pod kątem błedu kwadratowego oraz porcedur testowania porównując liczbę błedów I i II rodzaju.  
+
+Wygenerowana została ortonormalna macierz planu $\mathbb{X}_{1000 \times 1000}$, a następnie wektor współczynników regresji jako ciąg niezależnych zmiennych losowych z rozkładu 
+$$\beta_i \sim (1-\gamma)\delta_0 + \gamma \phi(0, \tau^2),$$
+gdzie $\delta_0$ jest rozkładem skupionym w zerze, $\phi(0,\tau^2)$ jest gęstością rozkładu $N(0,\tau^2)$ i mamy $6$ przypadków, gdy $\gamma \in \{0.01, 0.05, 0.1\}, \ \tau \in \{1.5\sqrt{2log1000}, 3\sqrt{2log1000}\}.$ Dla kazdego z przypadków wygenerowany został wektor odpowiedzi $Y = \mathbb{X}\beta + \epsilon$, gdzie $\epsilon \in N(0,I_{1000\times 1000})$. Zakładamy, że wariancja błędu jest znana $\sigma^2 = 1$.
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE}
+set.seed(1)
+library(latex2exp)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(pracma)
+library(MASS)
+library(dplyr)
+X = randortho(1000, type = c('orthonormal'))
+eps <-  0.01
+tau <- 1.5*sqrt(2*log(1000))
+B <- rbinom(1000, 1, eps)
+B <- B*rnorm(1000, 0, tau)
+Y <- X%*%B+rnorm(1000,0, 1)
+mle_beta <- c(t(X)%*%Y)
+p <- 1000
+c_JS <- 1-(p-2)/sum(mle_beta^2) #stala c
+est_B_c <- c_JS*mle_beta #estymator ściągający do 0
+d_JS <- (p-3)/(p-1)*1/var(mle_beta) #stala d
+est_B_d <- (1-d_JS)*mle_beta+d_JS*mean(mle_beta) # ściagający do wspolnej sredniej
+prog <- 2*(tau^2+1)/tau^2*(log((1-eps)/eps)+0.5*log(1+tau^2))
+discovery_bayes <- which(mle_beta^2 >= prog)
+p_values <- 2*(1-pnorm(abs(mle_beta)))
+discovery_BF <- which(p_values < 0.05/p)
+p_values_sorted <- sort(p_values, index = TRUE)
+BH <- ( p_values_sorted$x < 0.05*seq(1:p)/p ) 
+discovery_BH <- p_values_sorted$ix[BH]
+
+
+
+```
+
+## Zadanie 1
+
+**Estymator najmniejszych kwadratów** $\hat{\beta}_{LS}$ dla wektora odpowiedzi $\beta$ jest również estymatorem największej wiarygodności ozn. $\hat{\beta}_{MLE}$. Na ogół jest on zadany wzorem $\hat{\beta}_{LS} = (X'X)^{-1}X'Y$ i pochodzi z rozkładu $N(\beta, \sigma^2(X'X)^{-1})$. Przy założeniach macierzy planu i wariancji błedu wypisanych wyżej możemy uprościć tę postać i dostajemy, że
+$$\hat{\beta}_{LS} = X'Y,$$
+ten estymator pochodzi z rozkładu $N(\beta, I)$. Kolejne poznane estymatory to estymatory Jamesa-Steina, korzystają one jednak z estymatora największej wiarogodności. **Estymator Jamesa-Steina ściągający do zera** dla parametru $\beta$ jest postaci:
+$$\hat{\beta}_{JS_1} = c_{JS}\hat{\beta}_{MLE}, \quad c_{JS} = 1 - \frac{(n-2)\sigma^2}{||\hat{\beta}_{MLE}||^2}.$$
+Kolejnym estymatorem jest **Estymator Jamesa-Steina ściągajacy do wspólnej średniej** i jest on postaci:
+$$\hat{\beta}_{JS_2} = (1 - d_{JS})\hat{\beta}_{MLE} + d_{JS}\bar{\hat{\beta}}_{MLE}, \quad d_{JS} = \frac{n-3}{n-1}\frac{1}{Var(\hat{\beta}_{MLE})}.$$
+
+## Zadanie 2
+
+Poniżej przedstawione zostaną indeksy istotnych zmiennych, gdy $\gamma = 0.01, \ \tau = 1.5\sqrt{2log1000}$ dla różnych procedur.
+
+```{r, echo= FALSE, results='asis'}
+p_values <- 2*(1-pnorm(abs(mle_beta)))
+discovery_BF <- which(p_values < 0.05/1000)
+```
+**a)** procedura Bonferroniego: `r discovery_BF`  
+
+
+```{r, results='asis', echo = FALSE}
+p_valuess <- sort(p_values, index = TRUE)
+BH <- (p_valuess$x < 0.05*seq(1:1000)/1000) 
+discovery_BH <- p_valuess$ix[BH]
+```
+**b)** procedura Benjaminiego-Hochberga: `r discovery_BH `  
+
+ 
+```{r, echo= FALSE, results='asis'}
+prog <- 2*(tau^2+1)/tau^2*(log((1-eps)/eps)+0.5*log(1+tau^2))
+discovery_bayes <- which(mle_beta^2 >= prog)
+```
+**c)** klasyfikator Bayesowski: `r discovery_bayes`.  
+
+```{r,echo= FALSE }
+istotne_wsp <- which(B != 0)
+```
+Prawdziwymi istotnymi współczynnikami w tym przypadku są: `r istotne_wsp`. Możemy zauważyć, że porcedura Bonferroniego jest najbardziej konserwatywna, ma najmniejszą liczbę odkryć.  
+Pozostałe przypadki dla innych $\gamma$ oraz $\tau$ zostaną przeanalizowane pod kątem sumy błędów I i II rodzaju w zadaniu 4.
+
+## Zadanie 3
+Dla każdej procedury z zadania 2. wyznaczone zostały ,,ucięte" estymatory wektora $\beta$ za pomocą poniższego kodu.
+
+```{r, echo = FALSE}
+hard_trashold_indicator <- function(index_vector){
+  #index vector to indeksy wspolczynnikow istotnych
+  I <- rep(0, 1000)
+  I[index_vector] <- 1
+  return(I)
+}
+B_trashold_BF <- mle_beta * hard_trashold_indicator(discovery_BF)
+B_trashold_BH <- mle_beta * hard_trashold_indicator(discovery_BH)
+B_trashold_Bayes <- mle_beta * hard_trashold_indicator(discovery_bayes)
+
+
+```
+
+```{r}
+uciete_estym <- function(indeks){ #indeks istotnych wspolczynnikow
+  indx <- rep(0,1000)
+  indx[indeks] < -1
+  return(indx)
+}
+indx_BF <- mle_beta * uciete_estym(discovery_BF)
+indx_BH <- mle_beta * uciete_estym(discovery_BH)
+indx_Bay <- mle_beta * uciete_estym(discovery_bayes)
+```
+
+
+## Zadanie 4
+Estymatory z zadania 1. i 3. porównane zostały pod kątem błędu kwadratowego. 
+\begin{center}
+Tabela 1: Błąd kwadratowy estymatorów.
+\end{center}
+```{r, echo = FALSE}
+foo <- function(X, epsilon, tau){
+
+  p <- 1000
+  results <- data.frame()
+  B <- rbinom(1000, 1, epsilon)
+  B <- B*rnorm(1000, 0, tau)  
+  
+  Y <- X%*%B+rnorm(1000,0, 1)
+
+  MLE_BETA <- c(t(X)%*%Y)
+  
+  c_JS <- 1-(p-2)/sum(MLE_BETA^2)
+  est_B_c <- c_JS*MLE_BETA
+
+  d_JS <- (p-3)/(p-1)*1/var(MLE_BETA)
+  est_B_d <- (1-d_JS)*MLE_BETA+d_JS*mean(MLE_BETA)
+
+
+  p_values <- 2*(1-pnorm(abs(MLE_BETA)))
+  
+  
+  istotne_wsp <- which(B != 0) # prawdziwe wspolczynniki (niezerowe), dla kazdej procedury takie same. Dokladnie to ich indeksy
+  n0 <- p-length(istotne_wsp)
+  # bayes classificator
+  
+  prog <- 2*(tau^2+1)/tau^2*(log((1-epsilon)/epsilon)+0.5*log(1+tau^2)) 
+  discovery_bayes <- which(MLE_BETA^2 >= prog)
+  TD_Bayes <- sum(discovery_bayes %in% istotne_wsp)
+  FD_Bayes <- length(discovery_bayes )- TD_Bayes
+  T_Bayes <- p-(n0+TD_Bayes) # błędy II rodzaju
+  
+  # bonferroni
+  discovery_BF <- which(p_values < 0.05/p)
+  TD_BF <- sum(discovery_BF %in% istotne_wsp)   # liczba prawdziwych odkryc - S
+  FD_BF <- length(discovery_BF )- TD_BF #falszywe odkrycia V=R-S
+  T_BF <- p-(n0+TD_BF) # błędy II rodzaju
+  
+  # benjamini hochbergh
+  p_values_sorted <- sort(p_values, index = TRUE)
+  BH <- ( p_values_sorted$x < 0.05*seq(1:p)/p ) 
+  discovery_BH <- p_values_sorted$ix[BH]
+  TD_BH <- sum(discovery_BH %in% istotne_wsp) # prawdziwe
+  FD_BH <- sum(BH)-TD_BH # falszywe = wszystkie odkrycia - prawdziwe
+  T_BH <- p-(n0+TD_BH) # błędy II rodzaju
+  
+  # konstrukcja estymatora obcietego
+
+  B_trashold_BF <- MLE_BETA*hard_trashold_indicator(discovery_BF)
+  B_trashold_BH <- MLE_BETA*hard_trashold_indicator(discovery_BH)
+  B_trashold_Bayes <- MLE_BETA*hard_trashold_indicator(discovery_bayes)
+  
+  # porównanie błędu kwadratowego
+
+
+  results <- rbind(results, c(
+    sum( (MLE_BETA-B)^2 ), # LS
+    sum( (est_B_c-B)^2 ), # ściagajacy do 0
+    sum( (est_B_d-B)^2 ), # -||- do wspolnej srendniej
+    sum( (B_trashold_BF-B)^2 ), # obcięty Bonferroni
+    sum( (B_trashold_BH-B)^2 ), # obciety B-H
+    sum( (B_trashold_Bayes-B)^2 ), # obciety B-H
+    FD_BF+T_BF,
+    FD_BH+T_BH,
+    FD_Bayes+T_Bayes
+  )
+  )
+  names(results) <-  c('LS', 'c_JS', 'd_JS', 'BF','BH', 'Bayess', 'c_BF', 'c_BH', 'c_Bayess')
+  return(results)
+}
+
+z1 <- foo(X, 0.01, 1.5*sqrt(2*log(1000)))
+z2 <- foo(X, 0.01, 3*sqrt(2*log(1000)))
+z3 <- foo(X, 0.05, 1.5*sqrt(2*log(1000)))
+z4 <- foo(X, 0.05, 3*sqrt(2*log(1000)))
+z5 <- foo(X, 0.1, 1.5*sqrt(2*log(1000)))
+z6 <- foo(X, 0.1, 3*sqrt(2*log(1000)))
+
+
+
+# Połączenie wszystkich wyników w jedną ramkę danych
+all_results <- rbind(z1, z2, z3, z4, z5, z6)
+
+# Stworzenie ramki danych z parametrami epsilon (eps) i tau
+params <- expand.grid(epsilon = c(0.01, 0.05, 0.1), tau = c(1.5*sqrt(2*log(1000)), 3*sqrt(2*log(1000))))
+
+# Dodanie parametrów do ramki wyników
+all_results <- round(cbind(params, all_results),3)
+
+
+
+# Wybór interesujących kolumn
+selected_cols <- c('LS', 'c_JS', 'd_JS', 'BF', 'BH', 'Bayess')
+
+
+all_results$tau <- c(rep("$1.5\\sqrt{2\\log{1000}}$",3), rep("$3\\sqrt{2\\log{1000}}$",3))
+# Wybór interesujących kolumn
+selected_cols <- c('LS', 'c_JS', 'd_JS', 'BF', 'BH', 'Bayess')
+
+# Wyświetlenie wynikowej tabeli
+col_names <- c("$\\gamma$", "$\\tau$", "$\\hat{\\beta}_{LS}$", "$\\hat{\\beta}_{c_{JS}}$", "$\\hat{\\beta}_{d_{JS}}$", "$\\hat{\\beta}_{BF}^{uc}$", "$\\hat{\\beta}_{BH}^{uc}$", "$\\hat{\\beta}_{Bay}^{uc}$")
+
+# Wyświetlenie wynikowej tabeli
+kable(all_results[, c('epsilon', 'tau', selected_cols)], col.names = col_names, escape = FALSE, format = "markdown")
+
+```
+
+Z tabeli można odczytać, że estymatory wyznaczone w zadaniu 3. spisują się najlepiej — mają dużo mniejsze wartości błędu kwadratowego. Najmniejsze wartości dla jednego powtórzenia w każdym z przypadków uzyskał ,,ucięty" estymator wyznaczony za pomocą procedury Benjaminiego-Hochberga.  
+Dla każdej procedury testowania z 2. zadania przedstawione zostaną sumy liczb błędów I i II rodzaju.
+
+\begin{center}
+Tabela 2: Suma liczb błędów I i II rodzaju.
+\end{center}
+```{r, echo = FALSE}
+selected_cols1 <- c('c_BF', 'c_BH', 'c_Bayess')
+all_results$tau <- c(rep("$1.5\\sqrt{2\\log{1000}}$",3), rep("$3\\sqrt{2\\log{1000}}$",3))
+kable(all_results[, c('epsilon', 'tau', selected_cols1)], col.names = c("$\\gamma$", "$\\tau$", "BF", "BH", "Bayess"), escape = FALSE, format = "markdown")
+
+```
+Wartości są bardzo do siebie zbliżone, w każdym z przypadków, dla każdej procedury. Cieżko wybrać która z nich wypada najlepiej dla jednego powtórzenia, można zauważyć, że procedura Bonferroniego ma najwięcej błedów i wypada najgorzej.   
+
+\newpage
+
+Dla każdej kombinacji $\gamma$ i $\tau$ powtórzę doświadczenie $1000$ razy i porównam estymatory pod kątem $MSE$, a analizowane procedury pod katęm średniej liczby sumy błędów pierwszego i drugiego rodzaju.
+
+\begin{center}
+Tabela 3: Błąd średniokwadratowy estymatorów przy 1000 powtórzeniach.
+\end{center}
+
+```{r, echo = FALSE}
+foo <- function(X, epsilon, tau){
+
+  p <- 1000
+  results <- data.frame()
+  for (k in 1:300){
+  B <- rbinom(1000, 1, epsilon)
+  B <- B*rnorm(1000, 0, tau)  
+  
+  Y <- X%*%B+rnorm(1000,0, 1)
+
+  MLE_BETA <- c(t(X)%*%Y)
+  
+  c_JS <- 1-(p-2)/sum(MLE_BETA^2)
+  est_B_c <- c_JS*MLE_BETA
+
+  d_JS <- (p-3)/(p-1)*1/var(MLE_BETA)
+  est_B_d <- (1-d_JS)*MLE_BETA+d_JS*mean(MLE_BETA)
+
+
+  p_values <- 2*(1-pnorm(abs(MLE_BETA)))
+  
+  
+  istotne_wsp <- which(B != 0) # prawdziwe wspolczynniki (niezerowe), dla kazdej procedury takie same. Dokladnie to ich indeksy
+  n0 <- p-length(istotne_wsp)
+  # bayes classificator
+  
+  prog <- 2*(tau^2+1)/tau^2*(log((1-epsilon)/epsilon)+0.5*log(1+tau^2)) 
+  discovery_bayes <- which(MLE_BETA^2 >= prog)
+  TD_Bayes <- sum(discovery_bayes %in% istotne_wsp)
+  FD_Bayes <- length(discovery_bayes )- TD_Bayes
+  T_Bayes <- p-(n0+TD_Bayes) # błędy II rodzaju
+  
+  # bonferroni
+  discovery_BF <- which(p_values < 0.05/p)
+  TD_BF <- sum(discovery_BF %in% istotne_wsp)   # liczba prawdziwych odkryc - S
+  FD_BF <- length(discovery_BF )- TD_BF #falszywe odkrycia V=R-S
+  T_BF <- p-(n0+TD_BF) # błędy II rodzaju
+  
+  # benjamini hochbergh
+  p_values_sorted <- sort(p_values, index = TRUE)
+  BH <- ( p_values_sorted$x < 0.05*seq(1:p)/p ) 
+  discovery_BH <- p_values_sorted$ix[BH]
+  TD_BH <- sum(discovery_BH %in% istotne_wsp) # prawdziwe
+  FD_BH <- sum(BH)-TD_BH # falszywe = wszystkie odkrycia - prawdziwe
+  T_BH <- p-(n0+TD_BH) # błędy II rodzaju
+  
+  # konstrukcja estymatora obcietego
+
+  B_trashold_BF <- MLE_BETA*hard_trashold_indicator(discovery_BF)
+  B_trashold_BH <- MLE_BETA*hard_trashold_indicator(discovery_BH)
+  B_trashold_Bayes <- MLE_BETA*hard_trashold_indicator(discovery_bayes)
+  
+  # porównanie błędu kwadratowego
+
+
+  results <- rbind(results, c(
+    sum( (MLE_BETA-B)^2 ), # LS
+    sum( (est_B_c-B)^2 ), # ściagajacy do 0
+    sum( (est_B_d-B)^2 ), # -||- do wspolnej srendniej
+    sum( (B_trashold_BF-B)^2 ), # obcięty Bonferroni
+    sum( (B_trashold_BH-B)^2 ), # obciety B-H
+    sum( (B_trashold_Bayes-B)^2 ), # obciety B-H
+    FD_BF+T_BF,
+    FD_BH+T_BH,
+    FD_Bayes+T_Bayes
+  )
+  )
+  }
+  names(results) <-  c('LS', 'c_JS', 'd_JS', 'BF','BH', 'Bayess', 'c_BF', 'c_BH', 'c_Bayess')
+  return(results)
+}
+z1 <- round(colMeans(foo(X, 0.01, 1.5*sqrt(2*log(1000)))),2)
+z2 <- round(colMeans(foo(X, 0.01, 3*sqrt(2*log(1000)))),2)
+z3 <- round(colMeans(foo(X, 0.05, 1.5*sqrt(2*log(1000)))),2)
+z4 <- round(colMeans(foo(X, 0.05, 3*sqrt(2*log(1000)))),2)
+z5 <- round(colMeans(foo(X, 0.1, 1.5*sqrt(2*log(1000)))),2)
+z6 <- round(colMeans(foo(X, 0.1, 3*sqrt(2*log(1000)))),2)
+all_results <- rbind(z1, z2, z3, z4, z5, z6)
+
+# Stworzenie ramki danych z parametrami epsilon (eps) i tau
+params <- expand.grid(epsilon = c(0.01, 0.05, 0.1), tau = c(1.5*sqrt(2*log(1000)), 3*sqrt(2*log(1000))))
+
+# Dodanie parametrów do ramki wyników
+all_results <- round(cbind(params, all_results),3)
+
+
+
+# Wybór interesujących kolumn
+selected_cols <- c('LS', 'c_JS', 'd_JS', 'BF', 'BH', 'Bayess')
+
+
+all_results$tau <- c(rep("$1.5\\sqrt{2\\log{1000}}$",3), rep("$3\\sqrt{2\\log{1000}}$",3))
+# Wybór interesujących kolumn
+selected_cols <- c('LS', 'c_JS', 'd_JS', 'BF', 'BH', 'Bayess')
+
+# Wyświetlenie wynikowej tabeli
+col_names <- c("$\\gamma$", "$\\tau$", "$\\hat{\\beta}_{LS}$", "$\\hat{\\beta}_{c_{JS}}$", "$\\hat{\\beta}_{d_{JS}}$", "$\\hat{\\beta}_{BF}^{uc}$", "$\\hat{\\beta}_{BH}^{uc}$", "$\\hat{\\beta}_{Bay}^{uc}$")
+rownames(all_results) <- NULL
+# Wyświetlenie wynikowej tabeli
+kable(all_results[, c('epsilon', 'tau', selected_cols)], col.names = col_names, escape = FALSE, format = "markdown")
+
+
+
+```
+W tabeli zostały wyznaczone średnie wartości błędów kwadratowych estymatorów przy 1000 powtórzeniach. Tak jak przy 1 powtórzeniu ,,ucięte" estymatory ponownie wypadają dużo lepiej od estymatora najmniejszych kwadratów oraz estymatorów Jamesa-Steina. Ich wartości są bardzo zbliżone dla każdej kombinacji $\tau$ i $\gamma$. Dla $\tau = 3\sqrt{2log{1000}}$ ,,ucięty" estymator wyznaczony za pomocą procedury Bonferroniego minimalnie wypada gorzej, ale nadal te wartości są zbliżone. Estymatory z zadania 2. wypadają znacząco gorzej, szczególnie estymator najmniejszych kwadratów.  
+
+Na następnej stronie (rysunek 1.) przedstawione zostały wykresy boxplot dla błędu kwadratowego dla każdej procedury przy 1000 powtórzeniach. Możemy zauważyć z nich, że estymator najmniejszych kwadratów (oznaczony kolorem czerwonym) nie zmienia się znacząco niezależnie od doboru parametrów $\tau$ i $\gamma$. Wypada on na tle innych najgorzej, ma średnio największy błąd kwadratowy dla każdego przypadku.  
+Oba estymatory Jamesa-Steina (ściągający do zera — kolor zółty, ściągający do wspólnej średniej — zielony) zachowują się podobnie w każdym z przypadków. Najlepiej wypadają one dla najmniejszych wartości parametrów ($\tau = 1.5\sqrt{2\log{1000}}, \ \gamma = 0.01$), zwiększenie któregoś z tych parametrów powoduje zwiększenie się błedu. Mają również estymatory Jamesa-Steina zauważalnie największy IQR, co może wpływać na większą wariancję estymatorów.  
+Z wykresów również możemy zauważyć, że estymatory ,,ucięte" z zadania 3. mają dużo mniejsze wartości błędów, co zgadza się z analizą przeprowadzoną na podstawie tabeli. Można zauważyć, że ze zwiększającym się parametrem $\gamma$ błędy estymatorów  z zadania 3. się zwiększają, w tym dla procedury Bonferroniego widać największy wzrost.
+
+```{r, echo = FALSE, fig.height = 8.5, warning = FALSE}
+z1 <- foo(X, 0.01, 1.5*sqrt(2*log(1000)))
+z2 <- foo(X, 0.01, 3*sqrt(2*log(1000)))
+z3 <- foo(X, 0.05, 1.5*sqrt(2*log(1000)))
+z4 <- foo(X, 0.05, 3*sqrt(2*log(1000)))
+z5 <- foo(X, 0.1, 1.5*sqrt(2*log(1000)))
+z6 <- foo(X, 0.1, 3*sqrt(2*log(1000)))
+
+
+p1 <- ggplot(data = stack(z1[,1:6]), aes(x = ind, y = values, fill = ind)) +
+  geom_boxplot() +
+  scale_y_continuous('SE', breaks = seq(0, 1000, by = 100)) +
+  scale_x_discrete("") +
+  theme(legend.position = "none") +
+  annotate("text", x = 4.5, y = 1100, 
+           label = expression(paste(tau, " = ", 1.5*sqrt(2*log(1000)), ", ", gamma, " = ", 0.01)), 
+           size = 3)
+
+p2 <- ggplot(data = stack(z2[,1:6]), aes(x=ind, y = values, fill = ind, show.legend = FALSE))+
+  geom_boxplot()+
+  scale_y_continuous('SE', breaks = seq(0,1000, by=100))+
+  scale_x_discrete("")+
+  theme(legend.position = "none") +
+  annotate("text", x = 4.5, y = 1100, 
+           label = expression(paste(tau, " = ", 3*sqrt(2*log(1000)), ", ", gamma, " = ", 0.01)), 
+           size = 3)
+
+p3 <- ggplot(data = stack(z3[,1:6]), aes(x=ind, y = values, fill = ind, show.legend = FALSE))+
+  geom_boxplot()+
+  scale_y_continuous('SE', breaks = seq(0,1000, by=100))+
+  scale_x_discrete("")+
+  theme(legend.position = "none") +
+  annotate("text", x = 4.5, y = 1100, 
+           label = expression(paste(tau, " = ", 1.5*sqrt(2*log(1000)), ", ", gamma, " = ", 0.05)), 
+           size = 3)
+
+
+p4 <- ggplot(data = stack(z4[,1:6]), aes(x=ind, y = values, fill = ind, show.legend = FALSE))+
+  geom_boxplot()+
+  scale_y_continuous('SE', breaks = seq(0,1000, by=100))+
+  scale_x_discrete("")+
+  theme(legend.position = "none") +
+  annotate("text", x = 4.5, y = 1100, 
+           label = expression(paste(tau, " = ", 3*sqrt(2*log(1000)), ", ", gamma, " = ", 0.05)), 
+           size = 3)
+
+
+p5 <- ggplot(data = stack(z5[,1:6]), aes(x=ind, y = values, fill = ind, show.legend = FALSE))+
+  geom_boxplot()+
+  scale_y_continuous('SE', breaks = seq(0,1000, by=100))+
+  scale_x_discrete("")+
+  theme(legend.position = "none") +
+  annotate("text", x = 4.5, y = 1100, 
+           label = expression(paste(tau, " = ", 1.5*sqrt(2*log(1000)), ", ", gamma, " = ", 0.1)), 
+           size = 3) 
+
+p6 <- ggplot(data = stack(z6[,1:6]), aes(x=ind, y = values, fill = ind, show.legend = FALSE))+
+  geom_boxplot()+
+  scale_y_continuous('SE', breaks = seq(0,1000, by=100))+
+  scale_x_discrete("")+
+  theme(legend.position = "none") +
+  annotate("text", x = 4.5, y = 1100, 
+           label = expression(paste(tau, " = ", 3*sqrt(2*log(1000)), ", ", gamma, " = ", 0.1)), 
+           size = 3) 
+
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol = 2)
+
+```
+\begin{center}
+Rysunek 1: Boxploty błędów kwadratowych dla różnych $\tau$ i $\gamma$.
+\end{center}
+
+
+\newpage
+
+\begin{center}
+Tabela 4: Średnia suma liczby błędów I i II rodzaju przy 1000 powtórzeniach.
+\end{center}
+
+```{r, echo = FALSE}
+selected_cols1 <- c('c_BF', 'c_BH', 'c_Bayess')
+all_results$tau <- c(rep("$1.5\\sqrt{2\\log{1000}}$",3), rep("$3\\sqrt{2\\log{1000}}$",3))
+kable(all_results[, c('epsilon', 'tau', selected_cols1)], col.names = c("$\\gamma$", "$\\tau$", "BF", "BH", "Bayess"), escape = FALSE, format = "markdown")
+```
+Ponownie (jak przy jednym powtórzeniu) wyniki są zbliżone, jednak wśród nich najmniejsza liczba błędów, dla każdego z przypadków, jest dla procedury przy użyciu klasyfikatora Bayesowskiego. Dla 1000 powtórzeń również najgorzej wypada procedura Bonferroniego.
+
+## Wnioski
+
+* Dla rozpatrywanego modelu regresji liniowej najlepszym estymatorem wektora współczynników okazał się ,,ucięty" estymator wyznaczony za pomocą klasyfikatora Bayesowskiego. Charakteryzował się on najmniejszym błędem średniokwadratowym niezależnie od doboru parametrów $\gamma$ oraz $\tau$.  
+* Najgorszym pod względem MSE okazał się estymator najmniejszych kwadratów.  
+* Najmniejsza liczba sumy błedów I i II rodzaju dla każdego z przypadków wyszła dla procedury klasyfikatora Bayesowskiego, procedura Benjaminiego-Hochberga wypadła bardzo podobnie.  
+
